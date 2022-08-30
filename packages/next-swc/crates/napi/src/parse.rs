@@ -1,6 +1,6 @@
-use crate::util::{deserialize_json, CtxtExt, MapErr};
+use crate::util::{deserialize_json, MapErr};
 use anyhow::Context as _;
-use napi::{CallContext, Either, Env, JsObject, JsString, JsUndefined, Task};
+use napi::bindgen_prelude::*;
 use std::sync::Arc;
 use swc::{config::ParseOptions, try_with_handler};
 use swc_common::{comments::Comments, errors::ColorConfig, FileName, FilePathMapping, SourceMap};
@@ -11,13 +11,10 @@ pub struct ParseTask {
     pub options: String,
 }
 
-pub fn complete_parse(env: &Env, ast_json: String) -> napi::Result<JsString> {
-    env.create_string_from_std(ast_json)
-}
-
+#[napi]
 impl Task for ParseTask {
     type Output = String;
-    type JsValue = JsString;
+    type JsValue = String;
 
     fn compute(&mut self) -> napi::Result<Self::Output> {
         let c = swc::Compiler::new(Arc::new(SourceMap::new(FilePathMapping::empty())));
@@ -57,27 +54,27 @@ impl Task for ParseTask {
         Ok(ast_json)
     }
 
-    fn resolve(self, env: Env, result: Self::Output) -> napi::Result<Self::JsValue> {
-        complete_parse(&env, result)
+    fn resolve(&mut self, _: Env, result: Self::Output) -> napi::Result<Self::JsValue> {
+        Ok(result)
     }
 }
 
-#[js_function(3)]
-pub fn parse(ctx: CallContext) -> napi::Result<JsObject> {
-    let src = ctx.get::<JsString>(0)?.into_utf8()?.as_str()?.to_string();
-    let options = ctx.get_buffer_as_string(1)?;
-    let filename = ctx.get::<Either<JsString, JsUndefined>>(2)?;
-    let filename = if let Either::A(value) = filename {
-        FileName::Real(value.into_utf8()?.as_str()?.to_owned().into())
+#[napi]
+pub fn parse(
+    src: String,
+    options: Buffer,
+    filename: Option<String>,
+) -> napi::Result<AsyncTask<ParseTask>> {
+    let options = serde_json::from_slice(&options)?;
+    let filename = if let Some(value) = filename {
+        FileName::Real(value.into())
     } else {
         FileName::Anon
     };
 
-    ctx.env
-        .spawn(ParseTask {
-            filename,
-            src,
-            options,
-        })
-        .map(|t| t.promise_object())
+    Ok(AsyncTask::new(ParseTask {
+        filename,
+        src,
+        options,
+    }))
 }
